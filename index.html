@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>GPS Dash</title>
+    <title>Smart GPS Dash</title>
     <style>
         body {
             background-color: #000;
@@ -15,26 +15,29 @@
             justify-content: center;
             height: 100vh;
             margin: 0;
+            user-select: none;
         }
-        #speed { font-size: 150px; font-weight: 900; line-height: 1; }
-        #unit { font-size: 24px; margin-bottom: 20px; color: #008800; }
+        #speed { font-size: clamp(100px, 30vw, 180px); font-weight: 900; line-height: 1; }
+        #unit { font-size: 24px; margin-bottom: 20px; color: #008800; letter-spacing: 2px; }
         
         .stats-row { display: flex; gap: 40px; text-align: center; margin-bottom: 30px; }
-        .label { font-size: 14px; color: #888; text-transform: uppercase; }
-        .val { font-size: 32px; font-weight: bold; }
+        .label { font-size: 14px; color: #666; text-transform: uppercase; }
+        .val { font-size: 32px; font-weight: bold; color: #fff; }
 
         button {
-            background: #222;
+            background: #111;
             color: #00ff00;
             border: 1px solid #00ff00;
-            padding: 10px 20px;
-            border-radius: 5px;
-            font-size: 14px;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
             cursor: pointer;
+            transition: 0.2s;
         }
         button:active { background: #00ff00; color: #000; }
         
-        #status { position: fixed; bottom: 10px; font-size: 10px; color: #444; }
+        #status { position: fixed; bottom: 15px; font-size: 11px; color: #444; text-align: center; width: 100%; }
     </style>
 </head>
 <body>
@@ -44,117 +47,58 @@
 
     <div class="stats-row">
         <div>
-            <div class="label">Max</div>
+            <div class="label">Max Speed</div>
             <div id="max-val" class="val">0</div>
         </div>
         <div>
-            <div class="label">Trip (Mi)</div>
+            <div class="label">Trip Miles</div>
             <div id="trip-val" class="val">0.00</div>
         </div>
     </div>
 
-    <button onclick="resetStats()">RESET ALL</button>
+    <button onclick="resetStats()">RESET TRIP</button>
 
-    <div id="status">Initializing GPS...</div>
+    <div id="status">Initializing Sensors...</div>
 
     <script>
-        // --- GLOBAL VARIABLES (Your VBA "Public" variables) ---
+        // --- GLOBAL VARIABLES ---
         let maxSpeed = 0;
         let totalDistanceMeters = 0;
         let lastPosition = null;
+        let wakeLock = null;
+        let isPhysicallyMoving = false;
 
         const speedEl = document.getElementById('speed');
         const maxEl = document.getElementById('max-val');
         const tripEl = document.getElementById('trip-val');
         const statusEl = document.getElementById('status');
 
-        function resetStats() {
-            maxSpeed = 0;
-            totalDistanceMeters = 0;
-            maxEl.innerText = "0";
-            tripEl.innerText = "0.00";
+        // 1. MOTION SENSOR (Accelerometer) 
+        // Checks if the phone is physically vibrating/moving
+        if ('DeviceMotionEvent' in window) {
+            window.addEventListener('devicemotion', (event) => {
+                const acc = event.acceleration; 
+                if (!acc) return;
+                // Magnitude calculation: sqrt(x^2 + y^2 + z^2)
+                const motion = Math.sqrt((acc.x || 0)**2 + (acc.y || 0)**2 + (acc.z || 0)**2);
+                isPhysicallyMoving = motion > 0.3; // Threshold for vehicle vibration
+            });
         }
 
-        // Haversine formula shortcut to calculate distance between two GPS points
+        // 2. WAKE LOCK (Keep Screen On)
+        const requestWakeLock = async () => {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (err) {
+                console.log("WakeLock error: " + err.message);
+            }
+        };
+        requestWakeLock();
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') requestWakeLock();
+        });
+
+        // 3. DISTANCE CALCULATION (Haversine)
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371e3; // Earth radius in meters
-            const φ1 = lat1 * Math.PI/180;
-            const φ2 = lat2 * Math.PI/180;
-            const Δφ = (lat2-lat1) * Math.PI/180;
-            const Δλ = (lon2-lon1) * Math.PI/180;
-
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            return R * c; // returns distance in meters
-        }
-
-        if ("geolocation" in navigator) {
-            navigator.geolocation.watchPosition((pos) => {
-                const coords = pos.coords;
-                
-                // 1. UPDATE SPEED
-                if (coords.speed !== null) {
-                    const mph = Math.round(coords.speed * 2.23694);
-                    speedEl.innerText = mph;
-                    
-                    // Update Max Speed
-                    if (mph > maxSpeed) {
-                        maxSpeed = mph;
-                        maxEl.innerText = maxSpeed;
-                    }
-                }
-
-                // 2. UPDATE ODOMETER
-                if (lastPosition) {
-                    const dist = calculateDistance(
-                        lastPosition.latitude, lastPosition.longitude,
-                        coords.latitude, coords.longitude
-                    );
-                    
-                    // Only add if movement is significant (prevents "GPS drift" while standing still)
-                    if (dist > 2) { 
-                        totalDistanceMeters += dist;
-                        const miles = (totalDistanceMeters * 0.000621371).toFixed(2);
-                        tripEl.innerText = miles;
-                    }
-                }
-                lastPosition = coords;
-                statusEl.innerText = "Signal: Strong";
-
-            }, (err) => {
-                statusEl.innerText = "Error: " + err.message;
-            }, { enableHighAccuracy: true });
-        }
-
-        let wakeLock = null;
-
-// Function to request the wake lock
-const requestWakeLock = async () => {
-  try {
-    wakeLock = await navigator.wakeLock.request('screen');
-    statusEl.innerText = "GPS Active - Screen Stay-On Enabled";
-    
-    // If the lock is released (e.g. you minimize the app), reset the variable
-    wakeLock.addEventListener('release', () => {
-      console.log('Wake Lock was released');
-    });
-  } catch (err) {
-    statusEl.innerText = "Wake Lock Error: " + err.message;
-  }
-};
-
-// Request the lock when the page loads
-requestWakeLock();
-
-// Re-request the lock if the user switches back to the app (visibility change)
-document.addEventListener('visibilitychange', async () => {
-  if (wakeLock !== null && document.visibilityState === 'visible') {
-    await requestWakeLock();
-  }
-});
-        
-    </script>
-</body>
-</html>
