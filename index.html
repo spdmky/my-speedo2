@@ -127,6 +127,34 @@
                 statusEl.innerText = "Error: " + err.message;
             }, { enableHighAccuracy: true });
         }
+
+        let wakeLock = null;
+
+// Function to request the wake lock
+const requestWakeLock = async () => {
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    statusEl.innerText = "GPS Active - Screen Stay-On Enabled";
+    
+    // If the lock is released (e.g. you minimize the app), reset the variable
+    wakeLock.addEventListener('release', () => {
+      console.log('Wake Lock was released');
+    });
+  } catch (err) {
+    statusEl.innerText = "Wake Lock Error: " + err.message;
+  }
+};
+
+// Request the lock when the page loads
+requestWakeLock();
+
+// Re-request the lock if the user switches back to the app (visibility change)
+document.addEventListener('visibilitychange', async () => {
+  if (wakeLock !== null && document.visibilityState === 'visible') {
+    await requestWakeLock();
+  }
+});
+        
     </script>
 </body>
 </html>
