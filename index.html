@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GPS Dash</title>
+    <style>
+        body {
+            background-color: #000;
+            color: #00ff00;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        #speed { font-size: 150px; font-weight: 900; line-height: 1; }
+        #unit { font-size: 24px; margin-bottom: 20px; color: #008800; }
+        
+        .stats-row { display: flex; gap: 40px; text-align: center; margin-bottom: 30px; }
+        .label { font-size: 14px; color: #888; text-transform: uppercase; }
+        .val { font-size: 32px; font-weight: bold; }
+
+        button {
+            background: #222;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button:active { background: #00ff00; color: #000; }
+        
+        #status { position: fixed; bottom: 10px; font-size: 10px; color: #444; }
+    </style>
+</head>
+<body>
+
+    <div id="speed">0</div>
+    <div id="unit">MPH</div>
+
+    <div class="stats-row">
+        <div>
+            <div class="label">Max</div>
+            <div id="max-val" class="val">0</div>
+        </div>
+        <div>
+            <div class="label">Trip (Mi)</div>
+            <div id="trip-val" class="val">0.00</div>
+        </div>
+    </div>
+
+    <button onclick="resetStats()">RESET ALL</button>
+
+    <div id="status">Initializing GPS...</div>
+
+    <script>
+        // --- GLOBAL VARIABLES (Your VBA "Public" variables) ---
+        let maxSpeed = 0;
+        let totalDistanceMeters = 0;
+        let lastPosition = null;
+
+        const speedEl = document.getElementById('speed');
+        const maxEl = document.getElementById('max-val');
+        const tripEl = document.getElementById('trip-val');
+        const statusEl = document.getElementById('status');
+
+        function resetStats() {
+            maxSpeed = 0;
+            totalDistanceMeters = 0;
+            maxEl.innerText = "0";
+            tripEl.innerText = "0.00";
+        }
+
+        // Haversine formula shortcut to calculate distance between two GPS points
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // Earth radius in meters
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; // returns distance in meters
+        }
+
+        if ("geolocation" in navigator) {
+            navigator.geolocation.watchPosition((pos) => {
+                const coords = pos.coords;
+                
+                // 1. UPDATE SPEED
+                if (coords.speed !== null) {
+                    const mph = Math.round(coords.speed * 2.23694);
+                    speedEl.innerText = mph;
+                    
+                    // Update Max Speed
+                    if (mph > maxSpeed) {
+                        maxSpeed = mph;
+                        maxEl.innerText = maxSpeed;
+                    }
+                }
+
+                // 2. UPDATE ODOMETER
+                if (lastPosition) {
+                    const dist = calculateDistance(
+                        lastPosition.latitude, lastPosition.longitude,
+                        coords.latitude, coords.longitude
+                    );
+                    
+                    // Only add if movement is significant (prevents "GPS drift" while standing still)
+                    if (dist > 2) { 
+                        totalDistanceMeters += dist;
+                        const miles = (totalDistanceMeters * 0.000621371).toFixed(2);
+                        tripEl.innerText = miles;
+                    }
+                }
+                lastPosition = coords;
+                statusEl.innerText = "Signal: Strong";
+
+            }, (err) => {
+                statusEl.innerText = "Error: " + err.message;
+            }, { enableHighAccuracy: true });
+        }
+    </script>
+</body>
+</html>
