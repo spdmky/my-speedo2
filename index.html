@@ -3,11 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Smart GPS Dash</title>
+    
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    
+    <title>GPS Dash Pro</title>
     <style>
         body {
             background-color: #000;
-            color: #00ff00;
+            color: #00ff00; /* Neon Green */
             font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             display: flex;
             flex-direction: column;
@@ -16,28 +21,33 @@
             height: 100vh;
             margin: 0;
             user-select: none;
+            overflow: hidden;
         }
         #speed { font-size: clamp(100px, 30vw, 180px); font-weight: 900; line-height: 1; }
         #unit { font-size: 24px; margin-bottom: 20px; color: #008800; letter-spacing: 2px; }
         
         .stats-row { display: flex; gap: 40px; text-align: center; margin-bottom: 30px; }
-        .label { font-size: 14px; color: #666; text-transform: uppercase; }
-        .val { font-size: 32px; font-weight: bold;  } // color: #fff;
+        .label { font-size: 14px; color: #444; text-transform: uppercase; }
+        
+        /* Default value color matches the MPH label */
+        .val { font-size: 32px; font-weight: bold; color: #008800; transition: color 0.3s; }
+        
+        /* This class will be added via Script when the odometer is "Live" */
+        .active-tick { color: #00ff00 !important; text-shadow: 0 0 10px #00ff00; }
 
         button {
             background: #111;
-            color: #00ff00;
-            border: 1px solid #00ff00;
+            color: #008800;
+            border: 1px solid #008800;
             padding: 12px 24px;
             border-radius: 8px;
             font-size: 16px;
             font-weight: bold;
             cursor: pointer;
-            transition: 0.2s;
         }
-        button:active { background: #00ff00; color: #000; }
+        button:active { background: #008800; color: #000; }
         
-        #status { position: fixed; bottom: 15px; font-size: 11px; color: #444; text-align: center; width: 100%; }
+        #status { position: fixed; bottom: 15px; font-size: 10px; color: #222; }
     </style>
 </head>
 <body>
@@ -58,51 +68,42 @@
 
     <button onclick="resetStats()">RESET TRIP</button>
 
-    <div id="status">Initializing Sensors...</div>
+    <div id="status">Ready</div>
 
     <script>
-        // --- GLOBAL VARIABLES ---
         let maxSpeed = 0;
         let totalDistanceMeters = 0;
         let lastPosition = null;
         let wakeLock = null;
-        let isPhysicallyMoving = false;
+        let motionScore = 0;
 
         const speedEl = document.getElementById('speed');
         const maxEl = document.getElementById('max-val');
         const tripEl = document.getElementById('trip-val');
         const statusEl = document.getElementById('status');
 
-        // 1. MOTION SENSOR (Accelerometer) 
-        // Checks if the phone is physically vibrating/moving
+        // MOTION SENSOR
         if ('DeviceMotionEvent' in window) {
             window.addEventListener('devicemotion', (event) => {
                 const acc = event.acceleration; 
                 if (!acc) return;
-                // Magnitude calculation: sqrt(x^2 + y^2 + z^2)
                 const motion = Math.sqrt((acc.x || 0)**2 + (acc.y || 0)**2 + (acc.z || 0)**2);
-                isPhysicallyMoving = motion > 0.3; // Threshold for vehicle vibration
+                if (motion > 0.4) {
+                    if (motionScore < 10) motionScore++; 
+                } else {
+                    if (motionScore > 0) motionScore--;
+                }
             });
         }
 
-        // 2. WAKE LOCK (Keep Screen On)
+        // WAKE LOCK
         const requestWakeLock = async () => {
-            try {
-                if ('wakeLock' in navigator) {
-                    wakeLock = await navigator.wakeLock.request('screen');
-                }
-            } catch (err) {
-                console.log("WakeLock error: " + err.message);
-            }
+            try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
         };
         requestWakeLock();
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') requestWakeLock();
-        });
 
-        // 3. DISTANCE CALCULATION (Haversine)
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371000; // Earth radius in meters
+            const R = 6371000;
             const dLat = (lat2 - lat1) * Math.PI / 180;
             const dLon = (lon2 - lon1) * Math.PI / 180;
             const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
@@ -111,49 +112,43 @@
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         }
 
-        // 4. MAIN GPS LOGIC
         if ("geolocation" in navigator) {
             navigator.geolocation.watchPosition((pos) => {
                 const coords = pos.coords;
-                // coords.speed is meters per second
                 const rawSpeed = coords.speed || 0;
                 const mph = Math.round(rawSpeed * 2.23694);
 
-                // Update Speed Display
-                speedEl.innerText = mph > 0 ? mph : 0;
+                speedEl.innerText = mph;
 
-                // Update Max Speed
                 if (mph > maxSpeed) {
                     maxSpeed = mph;
                     maxEl.innerText = maxSpeed;
                 }
 
-                // GATED ODOMETER:
-                // Only count distance if:
-                // - We have a previous point
-                // - GPS speed is > 0.7 m/s (~1.5 mph)
-                // - Accelerometer detects motion
-                if (lastPosition && rawSpeed > 0.7 && isPhysicallyMoving) {
-                    const dist = calculateDistance(
-                        lastPosition.latitude, lastPosition.longitude,
-                        coords.latitude, coords.longitude
-                    );
-
-                    // Ignore glitches (jumps over 150 meters between updates)
-                    if (dist > 2 && dist < 150) {
-                        totalDistanceMeters += dist;
-                        tripEl.innerText = (totalDistanceMeters * 0.000621371).toFixed(2);
+                // --- VISUAL QUEUE LOGIC ---
+                // Is the "Gate" open? (Speed > 2mph AND moving)
+                if (rawSpeed > 0.9 && motionScore > 3) {
+                    tripEl.classList.add('active-tick'); // Turn Neon Green
+                    
+                    if (lastPosition) {
+                        const dist = calculateDistance(
+                            lastPosition.latitude, lastPosition.longitude,
+                            coords.latitude, coords.longitude
+                        );
+                        if (dist > 4 && dist < 200) {
+                            totalDistanceMeters += dist;
+                            tripEl.innerText = (totalDistanceMeters * 0.000621371).toFixed(2);
+                        }
                     }
+                } else {
+                    tripEl.classList.remove('active-tick'); // Back to Dark Green
                 }
 
                 lastPosition = coords;
-                statusEl.innerText = "GPS Active • Screen On";
+                statusEl.innerText = "GPS Accuracy: " + Math.round(coords.accuracy) + "m";
             }, (err) => {
-                statusEl.innerText = "GPS Error: " + err.message;
-            }, { 
-                enableHighAccuracy: true, 
-                maximumAge: 0 
-            });
+                statusEl.innerText = "Error: " + err.message;
+            }, { enableHighAccuracy: true, maximumAge: 0 });
         }
 
         function resetStats() {
